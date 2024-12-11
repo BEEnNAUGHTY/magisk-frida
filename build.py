@@ -7,6 +7,7 @@ import shutil
 import threading
 import zipfile
 import concurrent.futures
+import json
 
 import requests
 
@@ -25,7 +26,7 @@ logger.addHandler(syslog)
 
 
 def download_file(url: str, path: Path):
-    file_name = url[url.rfind("/") + 1:]
+    file_name = url[url.rfind("/") + 1 :]
     logger.info(f"Downloading '{file_name}' to '{path}'")
 
     if path.exists():
@@ -56,7 +57,8 @@ def create_module_prop(path: Path, project_tag: str):
 name=MagiskFrida
 version={project_tag}
 versionCode={project_tag.replace(".", "").replace("-", "")}
-author=ViRb3
+author=ViRb3 & enovella
+updateJson=https://github.com/ViRb3/magisk-frida/releases/latest/download/updater.json
 description=Run frida-server on boot"""
 
     with open(path.joinpath("module.prop"), "w", newline="\n") as f:
@@ -77,7 +79,9 @@ def fill_module(arch: str, frida_tag: str, project_tag: str):
     threading.current_thread().setName(arch)
     logger.info(f"Filling module for arch '{arch}'")
 
-    frida_download_url = f"https://github.com/frida/frida/releases/download/{frida_tag}/"
+    frida_download_url = (
+        f"https://github.com/frida/frida/releases/download/{frida_tag}/"
+    )
     frida_server = f"frida-server-{frida_tag}-android-{arch}.xz"
     frida_server_path = PATH_DOWNLOADS.joinpath(frida_server)
 
@@ -85,6 +89,20 @@ def fill_module(arch: str, frida_tag: str, project_tag: str):
     files_dir = PATH_BUILD_TMP.joinpath("files")
     files_dir.mkdir(exist_ok=True)
     extract_file(frida_server_path, files_dir.joinpath(f"frida-server-{arch}"))
+
+
+def create_updater_json(project_tag: str):
+    logger.info("Creating updater.json")
+
+    updater = {
+        "version": project_tag,
+        "versionCode": int(project_tag.replace(".", "").replace("-", "")),
+        "zipUrl": f"https://github.com/ViRb3/magisk-frida/releases/download/{project_tag}/MagiskFrida-{project_tag}.zip",
+        "changelog": "https://raw.githubusercontent.com/ViRb3/magisk-frida/master/CHANGELOG.md",
+    }
+
+    with open(PATH_BUILD.joinpath("updater.json"), "w", newline="\n") as f:
+        f.write(json.dumps(updater, indent=4))
 
 
 def package_module(project_tag: str):
@@ -97,8 +115,10 @@ def package_module(project_tag: str):
             for file_name in files:
                 if file_name == "placeholder" or file_name == ".gitkeep":
                     continue
-                zf.write(Path(root).joinpath(file_name),
-                         arcname=Path(root).relative_to(PATH_BUILD_TMP).joinpath(file_name))
+                zf.write(
+                    Path(root).joinpath(file_name),
+                    arcname=Path(root).relative_to(PATH_BUILD_TMP).joinpath(file_name),
+                )
 
     shutil.rmtree(PATH_BUILD_TMP)
 
@@ -111,14 +131,14 @@ def do_build(frida_tag: str, project_tag: str):
 
     archs = ["arm", "arm64", "x86", "x86_64"]
     executor = concurrent.futures.ProcessPoolExecutor()
-    futures = [executor.submit(fill_module, arch, frida_tag, project_tag)
-               for arch in archs]
+    futures = [
+        executor.submit(fill_module, arch, frida_tag, project_tag) for arch in archs
+    ]
     for future in concurrent.futures.as_completed(futures):
         if future.exception() is not None:
             raise future.exception()
-    # TODO: Causes 'OSError: The handle is invalid' in Python 3.7, revert after update
-    # executor.shutdown()
 
     package_module(project_tag)
+    create_updater_json(project_tag)
 
     logger.info("Done")
